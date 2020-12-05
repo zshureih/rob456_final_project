@@ -22,6 +22,7 @@ from tf2_geometry_msgs import PoseStamped
 # the velocity command message
 from geometry_msgs.msg import Twist
 
+
 class GlobalPlanner(object):
     def __init__(self):
         # data
@@ -29,12 +30,14 @@ class GlobalPlanner(object):
         self.cost_map = None
         self.odom_pos = None
         self.goal_pos = (-6, 3)
-        
+
         # subscribers
-        self.lidar_sub = rospy.Subscriber('/scan', LaserScan, self.lidar_callback)
-        self.map_sub = rospy.Subscriber('/map', OccupancyGrid, self.map_callback)
+        self.lidar_sub = rospy.Subscriber(
+            '/scan', LaserScan, self.lidar_callback)
+        self.map_sub = rospy.Subscriber(
+            '/map', OccupancyGrid, self.map_callback)
         self.odom_sub = rospy.Subscriber('/odom', Odometry, self.odom_callback)
-        
+
         # publishers
         self.map_pub = rospy.Publisher('/recieved_map', Bool, queue_size=10)
         self.mark_pub = rospy.Publisher('/viz_marker', Marker, queue_size=10)
@@ -64,7 +67,6 @@ class GlobalPlanner(object):
         maxScanLength = scan_msg.range_max
         distances = scan_msg.ranges
         numScans = len(distances)
-
 
         # Problem 1: move the robot toward the goal
         # YOUR CODE HERE
@@ -148,7 +150,7 @@ class GlobalPlanner(object):
         self.map_data = msg
         shape = (self.map_data.info.width, self.map_data.info.height)
         self.map_array = np.reshape(
-            np.array(self.map_data.data), 
+            np.array(self.map_data.data),
             shape
         )
         self.map_pub.publish(True)
@@ -166,7 +168,8 @@ class GlobalPlanner(object):
 
         points = self.get_path()
         # convert points back into rviz units
-        points = [(self.x_array_to_rviz(a), self.y_array_to_rviz(b)) for a, b in points]
+        points = [(self.x_array_to_rviz(a), self.y_array_to_rviz(b))
+                  for a, b in points]
 
         new_marker = Marker()
         # Marker header specifies what (and when) it is drawn relative to
@@ -252,26 +255,30 @@ class GlobalPlanner(object):
         return []
 
     def x_rviz_to_array(self, x_pos):
-        x = round((x_pos - self.map_data.info.origin.position.x) / self.map_data.info.resolution)
+        x = round((x_pos - self.map_data.info.origin.position.x) /
+                  self.map_data.info.resolution)
         return int(x)
 
     def y_rviz_to_array(self, y_pos):
-        y = round(self.map_data.info.height - ((y_pos - self.map_data.info.origin.position.y) / self.map_data.info.resolution))
+        y = round(self.map_data.info.height - ((y_pos -
+                                                self.map_data.info.origin.position.y) / self.map_data.info.resolution))
         return int(y)
 
     def x_array_to_rviz(self, x_pos):
-        x = (x_pos * self.map_data.info.resolution) + self.map_data.info.origin.position.x
+        x = (x_pos * self.map_data.info.resolution) + \
+            self.map_data.info.origin.position.x
         return x
 
     def y_array_to_rviz(self, y_pos):
-        y = (-1 * self.map_data.info.resolution * (y_pos - self.map_data.info.height)) + self.map_data.info.origin.position.y
+        y = (-1 * self.map_data.info.resolution * (y_pos -
+                                                   self.map_data.info.height)) + self.map_data.info.origin.position.y
         return y
 
     def flood_fill(self, x, y, final_x, final_y):
         map_img = self.map_array.copy()
         unknown_spaces = np.where(map_img == -1)
         map_img[unknown_spaces] = 100  # turn everything unknown into a wall
-        
+
         nodes = [(0, (x, y))]
         heapify(nodes)
 
@@ -317,7 +324,6 @@ class GlobalPlanner(object):
                     self.cost_map[n_x][n_y] = new_p
                     heapq.heappush(nodes, (new_p, (n_x, n_y)))
 
-
         # plt.imsave("flood.png", map_obj, cmap='gray', vmin=0, vmax=400)
         print("could not find goal")
 
@@ -337,31 +343,55 @@ class GlobalPlanner(object):
         right = 0
         if column != image.shape[1] - 1:
             right = image[row][column + 1]
+        
+        top_left = 0
+        if column != image.shape[1] - 1:
+            top_left = image[row - 1][column - 1]
+
+        top_right = 0
+        if column != image.shape[1] - 1:
+            top_right = image[row - 1][column + 1]
+        
+        bottom_left = 0
+        if column != image.shape[1] - 1:
+            bottom_left = image[row + 1][column - 1]
+
+        bottom_right = 0
+        if column != image.shape[1] - 1:
+            bottom_right = image[row + 1][column + 1]
 
         ret_pixels = []
-        if up != 0:
+        if up != 0 or len(self.get_neighbors(image, row - 1, column)) == 8:
             ret_pixels.append((row - 1, column))
-        if down != 0:
+        if down != 0 or len(self.get_neighbors(image, row + 1, column)) == 8:
             ret_pixels.append((row + 1, column))
-        if left != 0:
+        if left != 0 or len(self.get_neighbors(image, row, column - 1)) == 8:
             ret_pixels.append((row, column - 1))
-        if right != 0:
+        if right != 0 or len(self.get_neighbors(image, row, column + 1)) == 8:
             ret_pixels.append((row, column + 1))
+        if top_left != 0 or len(self.get_neighbors(image, row - 1, column - 1)) == 8:
+            ret_pixels.append((row - 1, column - 1))
+        if top_right != 0 or len(self.get_neighbors(image, row - 1, column + 1)) == 8:
+            ret_pixels.append((row - 1, column + 1))
+        if bottom_left != 0 or len(self.get_neighbors(image, row + 1, column - 1)) == 8:
+            ret_pixels.append((row + 1, column - 1))
+        if bottom_right != 0 or len(self.get_neighbors(image, row + 1, column + 1)) == 8:
+            ret_pixels.append((row + 1, column + 1))
 
         return ret_pixels
 
+
 if __name__ == "__main__":
     # Initialize the node
-    rospy.init_node('part1', log_level=rospy.DEBUG)
+    rospy.init_node('part2', log_level=rospy.DEBUG)
 
     # call our planner
     gp = GlobalPlanner()
-    
+
     # Main Loop:
     # part 1 and 2 - chart a path and navigate towards the goal
     while not rospy.is_shutdown():
         gp.mark_path_to_goal()
-    
+
     # Turn control over to ROS
     rospy.spin()
-
