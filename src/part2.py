@@ -29,7 +29,7 @@ class GlobalPlanner(object):
         self.map_data = None
         self.cost_map = None
         self.odom_pos = None
-        self.goal_pos = (-6, 3)
+        self.goal_pos = (1, 4)
 
         # subscribers
         self.lidar_sub = rospy.Subscriber(
@@ -182,8 +182,8 @@ class GlobalPlanner(object):
         # Set marker visual properties
         new_marker.color.b = 1.0
         new_marker.color.a = 1.0
-        new_marker.scale.x = 0.2
-        new_marker.scale.y = 0.2
+        new_marker.scale.x = 0.1
+        new_marker.scale.y = 0.1
         for (x, y) in points:
             # set current point
             p = Point()
@@ -192,6 +192,7 @@ class GlobalPlanner(object):
             p.z = 0.1
             new_marker.points.append(p)
         self.mark_pub.publish(new_marker)
+        quit()
 
     def get_path(self):
         pos = self.odom_pos[:2]
@@ -214,17 +215,40 @@ class GlobalPlanner(object):
 
         # build cost map (flood fill)
         self.cost_map = np.full(self.map_array.shape, fill_value=np.inf)
-        self.flood_fill(current_y, current_x, goal_y, goal_x)
+        if self.flood_fill(current_y, current_x, goal_y, goal_x):
+            # get path
+            return self.find_path(current_y, current_x, goal_y, goal_x)
+        else:
+            return []
+       
+    def near_wall(self, img, x, y):
+        width = 3
 
-        # get path
-        return self.find_path(current_y, current_x, goal_y, goal_x)
+        start = np.array([x, y])
+        start_x = x - width
+        start_y = y - width
+
+        end_x = x + width
+        end_y = y + width
+
+        for i in range(start_x, end_x):
+            for j in range(start_y, end_y):
+                curr = np.array([i, j])
+
+                if np.linalg.norm(start - curr) <= width:  # circle radius width
+                    if img[i][j] == 100:
+                        # print("{}, {} near wall".format(i, j))
+                        return True
+
+        # print("not near wall")
+        return False
 
     def find_path(self, x_0, y_0, x_1, y_1):
         cost_map = self.cost_map
         img = self.map_array
 
         # work backwards towards goal
-        node = cost_map[x_1][y_1]
+        node = cost_map[x_1][y_1] #node = distance
         c_x = x_1
         c_y = y_1
 
@@ -239,10 +263,11 @@ class GlobalPlanner(object):
                 n_x = neighbor[0]
                 n_y = neighbor[1]
 
-                if cost_map[n_x][n_y] < node and not (n_x, n_y) in path:
+                if cost_map[n_x][n_y] < node and not (n_x, n_y) in path and not self.near_wall(img, n_x, n_y):
                     c_x = n_x
                     c_y = n_y
                     node = cost_map[n_x][n_y]
+                    print(node)
 
             path.append((c_x, c_y))
 
@@ -275,9 +300,12 @@ class GlobalPlanner(object):
         return y
 
     def flood_fill(self, x, y, final_x, final_y):
-        map_img = self.map_array.copy()
-        unknown_spaces = np.where(map_img == -1)
+        map_img = np.flipud(self.map_array.copy())
+        unknown_spaces = np.where(map_img == -1)  # -1 means unknown
         map_img[unknown_spaces] = 100  # turn everything unknown into a wall
+        # plt.imshow(map_img, cmap='gray', vmin=-1, vmax=100)
+        # plt.show(True)
+        # quit()
 
         nodes = [(0, (x, y))]
         heapify(nodes)
@@ -285,9 +313,11 @@ class GlobalPlanner(object):
         while nodes:
             # pop the node
             node = heapq.heappop(nodes)
+            print(node)
             # get its values
             cur_p = node[0]
             cur_x, cur_y = node[1]
+
             # update the map object
             self.cost_map[cur_x][cur_y] = cur_p
             # get neighbors
@@ -298,18 +328,17 @@ class GlobalPlanner(object):
                 n_x = neighbor[0]
                 n_y = neighbor[1]
                 n = np.array([n_x, n_y])
+
                 # make the path distance the priority
-                new_p = cur_p + np.linalg.norm(np.array([cur_x, cur_y]) - n)
+                new_p = (cur_p + np.linalg.norm(np.array([cur_x, cur_y]) - n))
 
                 if (n_x, n_y) == (final_x, final_y):
                     self.cost_map[n_x][n_y] = new_p
-                    # print("found the goal")
-                    return
+                    print("found the goal")
+                    return True
 
                 # if the block is already seen, possibly update priority
                 if self.cost_map[n_x][n_y] != np.inf:
-                    # print("exists")
-
                     # get the p value that matches the node in the heap
                     old_p = [a for a, b in nodes if (n_x, n_y) == b]
                     if len(old_p) > 1:
@@ -324,58 +353,44 @@ class GlobalPlanner(object):
                     self.cost_map[n_x][n_y] = new_p
                     heapq.heappush(nodes, (new_p, (n_x, n_y)))
 
-        # plt.imsave("flood.png", map_obj, cmap='gray', vmin=0, vmax=400)
+            gray_max = np.max(self.cost_map)
+            plt.imsave("flood.png", self.cost_map, cmap='gray', vmin=0, vmax=gray_max)
+            # plt.show()
         print("could not find goal")
+        return False
+
+    def is_wall(self, image, row, column):
+        if image[row][column] == 100:
+            return True
+        else:
+            return False
 
     def get_neighbors(self, image, row, column):
-        up = 0
-        if row != 0:
-            up = image[row - 1][column]
-
-        down = 0
-        if row != image.shape[0] - 1:
-            down = image[row + 1][column]
-
-        left = 0
-        if column != 0:
-            left = image[row][column - 1]
-
-        right = 0
-        if column != image.shape[1] - 1:
-            right = image[row][column + 1]
-        
-        top_left = 0
-        if column != image.shape[1] - 1:
-            top_left = image[row - 1][column - 1]
-
-        top_right = 0
-        if column != image.shape[1] - 1:
-            top_right = image[row - 1][column + 1]
-        
-        bottom_left = 0
-        if column != image.shape[1] - 1:
-            bottom_left = image[row + 1][column - 1]
-
-        bottom_right = 0
-        if column != image.shape[1] - 1:
-            bottom_right = image[row + 1][column + 1]
-
         ret_pixels = []
-        if up != 0:
+        #get all immediate neighbors not near a wall (include diagnols)
+
+        if not self.near_wall(image, row - 1, column):
             ret_pixels.append((row - 1, column))
-        if down != 0:
+
+        if not self.near_wall(image, row + 1, column):
             ret_pixels.append((row + 1, column))
-        if left != 0:
+
+        if not self.near_wall(image, row, column - 1):
             ret_pixels.append((row, column - 1))
-        if right != 0:
+
+        if not self.near_wall(image, row, column + 1):
             ret_pixels.append((row, column + 1))
-        if top_left != 0:
+
+        if not self.near_wall(image, row - 1, column - 1):
             ret_pixels.append((row - 1, column - 1))
-        if top_right != 0:
+
+        if not self.near_wall(image, row - 1, column + 1):
             ret_pixels.append((row - 1, column + 1))
-        if bottom_left != 0:
+
+        if not self.near_wall(image, row + 1, column - 1):
             ret_pixels.append((row + 1, column - 1))
-        if bottom_right != 0:
+
+        if not self.near_wall(image, row + 1, column + 1):
             ret_pixels.append((row + 1, column + 1))
 
         return ret_pixels
@@ -392,6 +407,5 @@ if __name__ == "__main__":
     # part 1 and 2 - chart a path and navigate towards the goal
     while not rospy.is_shutdown():
         gp.mark_path_to_goal()
-
     # Turn control over to ROS
     rospy.spin()
