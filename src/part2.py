@@ -361,21 +361,21 @@ class GlobalPlanner(object):
             bottom_right = image[row + 1][column + 1]
 
         ret_pixels = []
-        if up != 0 or len(self.get_neighbors(image, row - 1, column)) == 8:
+        if up != 0:
             ret_pixels.append((row - 1, column))
-        if down != 0 or len(self.get_neighbors(image, row + 1, column)) == 8:
+        if down != 0:
             ret_pixels.append((row + 1, column))
-        if left != 0 or len(self.get_neighbors(image, row, column - 1)) == 8:
+        if left != 0:
             ret_pixels.append((row, column - 1))
-        if right != 0 or len(self.get_neighbors(image, row, column + 1)) == 8:
+        if right != 0:
             ret_pixels.append((row, column + 1))
-        if top_left != 0 or len(self.get_neighbors(image, row - 1, column - 1)) == 8:
+        if top_left != 0:
             ret_pixels.append((row - 1, column - 1))
-        if top_right != 0 or len(self.get_neighbors(image, row - 1, column + 1)) == 8:
+        if top_right != 0:
             ret_pixels.append((row - 1, column + 1))
-        if bottom_left != 0 or len(self.get_neighbors(image, row + 1, column - 1)) == 8:
+        if bottom_left != 0:
             ret_pixels.append((row + 1, column - 1))
-        if bottom_right != 0 or len(self.get_neighbors(image, row + 1, column + 1)) == 8:
+        if bottom_right != 0:
             ret_pixels.append((row + 1, column + 1))
 
         return ret_pixels

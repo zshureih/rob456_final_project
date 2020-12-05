@@ -338,6 +338,22 @@ class GlobalPlanner(object):
         if column != image.shape[1] - 1:
             right = image[row][column + 1]
 
+        top_left = 0
+        if column != image.shape[1] - 1:
+            top_left = image[row - 1][column - 1]
+
+        top_right = 0
+        if column != image.shape[1] - 1:
+            top_right = image[row - 1][column + 1]
+
+        bottom_left = 0
+        if column != image.shape[1] - 1:
+            bottom_left = image[row + 1][column - 1]
+
+        bottom_right = 0
+        if column != image.shape[1] - 1:
+            bottom_right = image[row + 1][column + 1]
+
         ret_pixels = []
         if up != 0:
             ret_pixels.append((row - 1, column))
@@ -347,6 +363,14 @@ class GlobalPlanner(object):
             ret_pixels.append((row, column - 1))
         if right != 0:
             ret_pixels.append((row, column + 1))
+        if top_left != 0:
+            ret_pixels.append((row - 1, column - 1))
+        if top_right != 0:
+            ret_pixels.append((row - 1, column + 1))
+        if bottom_left != 0:
+            ret_pixels.append((row + 1, column - 1))
+        if bottom_right != 0:
+            ret_pixels.append((row + 1, column + 1))
 
         return ret_pixels
 

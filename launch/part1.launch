@@ -5,7 +5,7 @@
     <node pkg="tf" type="static_transform_publisher" name="base_scan_tf" args="0 0 0 0 0 0 base_footprint base_scan 100"/>
     <node pkg="tf" type="static_transform_publisher" name="map_odom_tf" args="0 0 0 0 0 0 map odom 100"/>
 	
-    <node pkg="map_server" type="map_server" name="map_server" args="$(find slam_mapping)/shureihz.yaml"/>
+    <node pkg="map_server" type="map_server" name="map_server" args="$(find rob456_final_project)/shureihz.yaml"/>
     <node pkg="rob456_final_project" type="part1.py" name="part1" output="screen"/>
     <node pkg="rviz" type="rviz" name="rviz"/>
 </launch>
