@@ -22,19 +22,27 @@ from tf2_geometry_msgs import PoseStamped
 # the velocity command message
 from geometry_msgs.msg import Twist
 
+
 class GlobalPlanner(object):
     def __init__(self):
+        # block movement
+        self.mov_block = False
+        # block path planning
+        self.path_block = False
+
         # data
         self.map_data = None
         self.cost_map = None
         self.odom_pos = None
-        self.goal_pos = (-6, 3)
-        
+        self.goal_pos = (-6, -3)
+
         # subscribers
-        self.lidar_sub = rospy.Subscriber('/scan', LaserScan, self.lidar_callback)
-        self.map_sub = rospy.Subscriber('/map', OccupancyGrid, self.map_callback)
+        self.lidar_sub = rospy.Subscriber(
+            '/scan', LaserScan, self.lidar_callback)
+        self.map_sub = rospy.Subscriber(
+            '/map', OccupancyGrid, self.map_callback)
         self.odom_sub = rospy.Subscriber('/odom', Odometry, self.odom_callback)
-        
+
         # publishers
         self.map_pub = rospy.Publisher('/recieved_map', Bool, queue_size=10)
         self.mark_pub = rospy.Publisher('/viz_marker', Marker, queue_size=10)
@@ -64,7 +72,6 @@ class GlobalPlanner(object):
         maxScanLength = scan_msg.range_max
         distances = scan_msg.ranges
         numScans = len(distances)
-
 
         # Problem 1: move the robot toward the goal
         # YOUR CODE HERE
@@ -143,12 +150,43 @@ class GlobalPlanner(object):
         (r, p, yaw) = euler_from_quaternion([ori.x, ori.y, ori.z, ori.w])
         self.odom_pos = (position.x, position.y, yaw)
 
+        # # draw a marker on the goal
+        # new_marker = Marker()
+        # # Marker header specifies what (and when) it is drawn relative to
+        # new_marker.header.frame_id = "map"
+        # new_marker.header.stamp = rospy.Time.now()
+        # # uint8 POINTS=8
+        # new_marker.type = 8
+        # # Disappear after 1sec. Comment this line out to make them persist indefinitely
+        # # new_marker.lifetime = rospy.rostime.Duration(1, 0)
+        # # Set marker visual properties
+        # new_marker.color.r = 1.0
+        # new_marker.color.a = 1.0
+        # new_marker.scale.x = 0.1
+        # new_marker.scale.y = 0.1
+
+        # # set goal point
+        # p = Point()
+        # p.x = self.goal_pos[0]
+        # p.y = self.goal_pos[1]
+        # p.z = 0.1
+        # new_marker.points.append(p)
+
+        # # set current point
+        # p = Point()
+        # p.x = self.odom_pos[0]
+        # p.y = self.odom_pos[1]
+        # p.z = 0.1
+        # new_marker.points.append(p)
+
+        # self.mark_pub.publish(new_marker)
+
     def map_callback(self, msg):
         print("In Map Callback")
         self.map_data = msg
         shape = (self.map_data.info.width, self.map_data.info.height)
         self.map_array = np.reshape(
-            np.array(self.map_data.data), 
+            np.array(self.map_data.data),
             shape
         )
         self.map_pub.publish(True)
@@ -166,7 +204,8 @@ class GlobalPlanner(object):
 
         points = self.get_path()
         # convert points back into rviz units
-        points = [(self.x_array_to_rviz(a), self.y_array_to_rviz(b)) for a, b in points]
+        points = [(self.x_array_to_rviz(b), self.y_array_to_rviz(a))
+                  for a, b in points]
 
         new_marker = Marker()
         # Marker header specifies what (and when) it is drawn relative to
@@ -179,8 +218,8 @@ class GlobalPlanner(object):
         # Set marker visual properties
         new_marker.color.b = 1.0
         new_marker.color.a = 1.0
-        new_marker.scale.x = 0.2
-        new_marker.scale.y = 0.2
+        new_marker.scale.x = 0.1
+        new_marker.scale.y = 0.1
         for (x, y) in points:
             # set current point
             p = Point()
@@ -202,33 +241,54 @@ class GlobalPlanner(object):
         # convert current pos into map_grid coordinates
         current_y = self.x_rviz_to_array(pos[0])
         current_x = self.y_rviz_to_array(pos[1])
-        # print(current_x, current_y)
 
         # convert goal pos into map_grid coordinates
         goal_y = self.x_rviz_to_array(goal[0])
         goal_x = self.y_rviz_to_array(goal[1])
-        # print(goal_x, goal_y)
 
         # build cost map (flood fill)
         self.cost_map = np.full(self.map_array.shape, fill_value=np.inf)
-        self.flood_fill(current_y, current_x, goal_y, goal_x)
+        if self.flood_fill(current_x, current_y, goal_x, goal_y):
+            # get path
+            return self.find_path(current_x, current_y, goal_x, goal_y)
+        else:
+            return []
 
-        # get path
-        return self.find_path(current_y, current_x, goal_y, goal_x)
+    def near_wall(self, img, x, y):
+        width = 5
+
+        start = np.array([x, y])
+        start_x = x - width
+        start_y = y - width
+
+        end_x = x + width
+        end_y = y + width
+
+        for i in range(start_x, end_x):
+            for j in range(start_y, end_y):
+                curr = np.array([i, j])
+                if np.linalg.norm(start - curr) <= width:  # circle radius width
+                    if img[i][j] == 100:
+                        return True
+
+        # print("not near wall")
+        return False
 
     def find_path(self, x_0, y_0, x_1, y_1):
         cost_map = self.cost_map
-        img = self.map_array
+        img = np.flipud(self.map_array.copy())
 
         # work backwards towards goal
-        node = cost_map[x_1][y_1]
+        node = cost_map[x_1][y_1]  # node = distance
         c_x = x_1
         c_y = y_1
 
         path = [(c_x, c_y)]
         while node:
+            print("{}, {}".format(c_x, c_y), node)
             # get neighbors
             neighbors = self.get_neighbors(img, c_x, c_y)
+            print(neighbors)
 
             # find the neighbor with the lowest distance value
             # shortest_distance = np.inf
@@ -236,7 +296,7 @@ class GlobalPlanner(object):
                 n_x = neighbor[0]
                 n_y = neighbor[1]
 
-                if cost_map[n_x][n_y] < node and not (n_x, n_y) in path:
+                if cost_map[n_x][n_y] <= node and not (n_x, n_y) in path:
                     c_x = n_x
                     c_y = n_y
                     node = cost_map[n_x][n_y]
@@ -244,7 +304,7 @@ class GlobalPlanner(object):
             path.append((c_x, c_y))
 
             if node == 0:
-                # print("we found the path")
+                print("we found the path")
                 path.append((x_0, y_0))
                 return path
 
@@ -252,37 +312,53 @@ class GlobalPlanner(object):
         return []
 
     def x_rviz_to_array(self, x_pos):
-        x = round((x_pos - self.map_data.info.origin.position.x) / self.map_data.info.resolution)
+        x = round((x_pos - self.map_data.info.origin.position.x) /
+                  self.map_data.info.resolution)
         return int(x)
 
     def y_rviz_to_array(self, y_pos):
-        y = round(self.map_data.info.height - ((y_pos - self.map_data.info.origin.position.y) / self.map_data.info.resolution))
+        y = round(self.map_data.info.height - ((y_pos -
+                                                self.map_data.info.origin.position.y) / self.map_data.info.resolution))
         return int(y)
 
     def x_array_to_rviz(self, x_pos):
-        x = (x_pos * self.map_data.info.resolution) + self.map_data.info.origin.position.x
+        x = (x_pos * self.map_data.info.resolution) + \
+            self.map_data.info.origin.position.x
         return x
 
     def y_array_to_rviz(self, y_pos):
-        y = (-1 * self.map_data.info.resolution * (y_pos - self.map_data.info.height)) + self.map_data.info.origin.position.y
+        y = (-1 * self.map_data.info.resolution * (y_pos -
+                                                   self.map_data.info.height)) + self.map_data.info.origin.position.y
         return y
 
     def flood_fill(self, x, y, final_x, final_y):
-        map_img = self.map_array.copy()
-        unknown_spaces = np.where(map_img == -1)
+        map_img = np.flipud(self.map_array.copy())
+        unknown_spaces = np.where(map_img == -1)  # -1 means unknown
         map_img[unknown_spaces] = 100  # turn everything unknown into a wall
-        
+        # plt.imshow(map_img, cmap='gray', vmin=-1, vmax=100)
+        # plt.show(True)
+        # quit()
+
         nodes = [(0, (x, y))]
         heapify(nodes)
 
         while nodes:
             # pop the node
             node = heapq.heappop(nodes)
+            print(node)
             # get its values
             cur_p = node[0]
             cur_x, cur_y = node[1]
+
             # update the map object
             self.cost_map[cur_x][cur_y] = cur_p
+
+            # # if the current node is near the goal, but goal is near a wall, end early
+            # if np.linalg.norm(np.array([cur_x, cur_y]) - np.array([final_x, final_y])) <= 5 and self.near_wall(map_img, final_x, final_y):
+            #     # set the end of the path to the current node
+            #     print("found shortened path")
+            #     return True
+
             # get neighbors
             neighbors = self.get_neighbors(map_img, cur_x, cur_y)
 
@@ -291,18 +367,20 @@ class GlobalPlanner(object):
                 n_x = neighbor[0]
                 n_y = neighbor[1]
                 n = np.array([n_x, n_y])
+
                 # make the path distance the priority
-                new_p = cur_p + np.linalg.norm(np.array([cur_x, cur_y]) - n)
+                new_p = (cur_p + np.linalg.norm(np.array([cur_x, cur_y]) - n))
 
                 if (n_x, n_y) == (final_x, final_y):
                     self.cost_map[n_x][n_y] = new_p
-                    # print("found the goal")
-                    return
+                    print("found the goal")
+                    return True
+
+                # if self.near_wall(map_img, n_x, n_y):
+                #     new_p *= new_p  # square the distance to disuade path's near walls
 
                 # if the block is already seen, possibly update priority
                 if self.cost_map[n_x][n_y] != np.inf:
-                    # print("exists")
-
                     # get the p value that matches the node in the heap
                     old_p = [a for a, b in nodes if (n_x, n_y) == b]
                     if len(old_p) > 1:
@@ -317,75 +395,62 @@ class GlobalPlanner(object):
                     self.cost_map[n_x][n_y] = new_p
                     heapq.heappush(nodes, (new_p, (n_x, n_y)))
 
-
-        # plt.imsave("flood.png", map_obj, cmap='gray', vmin=0, vmax=400)
+            gray_max = np.max(self.cost_map)
+            plt.imsave("flood.png", self.cost_map,
+                       cmap='gray', vmin=0, vmax=300)
+            # plt.show()
         print("could not find goal")
+        return False
+
+    def is_wall(self, image, row, column):
+        if image[row][column] == 100:
+            return True
+        else:
+            return False
 
     def get_neighbors(self, image, row, column):
-        up = 0
-        if row != 0:
-            up = image[row - 1][column]
-
-        down = 0
-        if row != image.shape[0] - 1:
-            down = image[row + 1][column]
-
-        left = 0
-        if column != 0:
-            left = image[row][column - 1]
-
-        right = 0
-        if column != image.shape[1] - 1:
-            right = image[row][column + 1]
-
-        top_left = 0
-        if column != image.shape[1] - 1:
-            top_left = image[row - 1][column - 1]
-
-        top_right = 0
-        if column != image.shape[1] - 1:
-            top_right = image[row - 1][column + 1]
-
-        bottom_left = 0
-        if column != image.shape[1] - 1:
-            bottom_left = image[row + 1][column - 1]
-
-        bottom_right = 0
-        if column != image.shape[1] - 1:
-            bottom_right = image[row + 1][column + 1]
-
         ret_pixels = []
-        if up != 0:
+        #get all immediate neighbors not near a wall (include diagnols)
+
+        if not self.near_wall(image, row - 1, column):
             ret_pixels.append((row - 1, column))
-        if down != 0:
+
+        if not self.near_wall(image, row + 1, column):
             ret_pixels.append((row + 1, column))
-        if left != 0:
+
+        if not self.near_wall(image, row, column - 1):
             ret_pixels.append((row, column - 1))
-        if right != 0:
+
+        if not self.near_wall(image, row, column + 1):
             ret_pixels.append((row, column + 1))
-        if top_left != 0:
+
+        if not self.near_wall(image, row - 1, column - 1):
             ret_pixels.append((row - 1, column - 1))
-        if top_right != 0:
+
+        if not self.near_wall(image, row - 1, column + 1):
             ret_pixels.append((row - 1, column + 1))
-        if bottom_left != 0:
+
+        if not self.near_wall(image, row + 1, column - 1):
             ret_pixels.append((row + 1, column - 1))
-        if bottom_right != 0:
+
+        if not self.near_wall(image, row + 1, column + 1):
             ret_pixels.append((row + 1, column + 1))
 
         return ret_pixels
 
+
 if __name__ == "__main__":
     # Initialize the node
-    rospy.init_node('part1', log_level=rospy.DEBUG)
+    rospy.init_node('part2', log_level=rospy.DEBUG)
 
     # call our planner
     gp = GlobalPlanner()
-    
+
     # Main Loop:
-    # part 1 and 2 - chart a path and navigate towards the goal
+    # part 1 - chart a path
+
     while not rospy.is_shutdown():
         gp.mark_path_to_goal()
-    
+
     # Turn control over to ROS
     rospy.spin()
-

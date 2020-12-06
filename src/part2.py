@@ -25,11 +25,17 @@ from geometry_msgs.msg import Twist
 
 class GlobalPlanner(object):
     def __init__(self):
+        # block movement
+        self.mov_block = False
+        # block path planning
+        self.path_block = False
+
         # data
         self.map_data = None
         self.cost_map = None
         self.odom_pos = None
-        self.goal_pos = (1, 4)
+        self.goal_pos = (-6, -3)
+        self.sub_goals = None
 
         # subscribers
         self.lidar_sub = rospy.Subscriber(
@@ -145,6 +151,37 @@ class GlobalPlanner(object):
         (r, p, yaw) = euler_from_quaternion([ori.x, ori.y, ori.z, ori.w])
         self.odom_pos = (position.x, position.y, yaw)
 
+        # # draw a marker on the goal
+        # new_marker = Marker()
+        # # Marker header specifies what (and when) it is drawn relative to
+        # new_marker.header.frame_id = "map"
+        # new_marker.header.stamp = rospy.Time.now()
+        # # uint8 POINTS=8
+        # new_marker.type = 8
+        # # Disappear after 1sec. Comment this line out to make them persist indefinitely
+        # # new_marker.lifetime = rospy.rostime.Duration(1, 0)
+        # # Set marker visual properties
+        # new_marker.color.r = 1.0
+        # new_marker.color.a = 1.0
+        # new_marker.scale.x = 0.1
+        # new_marker.scale.y = 0.1
+        
+        # # set goal point
+        # p = Point()
+        # p.x = self.goal_pos[0]
+        # p.y = self.goal_pos[1]
+        # p.z = 0.1
+        # new_marker.points.append(p)
+
+        # # set current point
+        # p = Point()
+        # p.x = self.odom_pos[0]
+        # p.y = self.odom_pos[1]
+        # p.z = 0.1
+        # new_marker.points.append(p)
+
+        # self.mark_pub.publish(new_marker)
+
     def map_callback(self, msg):
         print("In Map Callback")
         self.map_data = msg
@@ -168,7 +205,7 @@ class GlobalPlanner(object):
 
         points = self.get_path()
         # convert points back into rviz units
-        points = [(self.x_array_to_rviz(a), self.y_array_to_rviz(b))
+        points = [(self.x_array_to_rviz(b), self.y_array_to_rviz(a))
                   for a, b in points]
 
         new_marker = Marker()
@@ -192,7 +229,6 @@ class GlobalPlanner(object):
             p.z = 0.1
             new_marker.points.append(p)
         self.mark_pub.publish(new_marker)
-        quit()
 
     def get_path(self):
         pos = self.odom_pos[:2]
@@ -206,23 +242,21 @@ class GlobalPlanner(object):
         # convert current pos into map_grid coordinates
         current_y = self.x_rviz_to_array(pos[0])
         current_x = self.y_rviz_to_array(pos[1])
-        # print(current_x, current_y)
 
         # convert goal pos into map_grid coordinates
         goal_y = self.x_rviz_to_array(goal[0])
         goal_x = self.y_rviz_to_array(goal[1])
-        # print(goal_x, goal_y)
 
         # build cost map (flood fill)
         self.cost_map = np.full(self.map_array.shape, fill_value=np.inf)
-        if self.flood_fill(current_y, current_x, goal_y, goal_x):
+        if self.flood_fill(current_x, current_y, goal_x, goal_y):
             # get path
-            return self.find_path(current_y, current_x, goal_y, goal_x)
+            return self.find_path(current_x, current_y, goal_x, goal_y)
         else:
             return []
        
     def near_wall(self, img, x, y):
-        width = 3
+        width = 5
 
         start = np.array([x, y])
         start_x = x - width
@@ -234,10 +268,8 @@ class GlobalPlanner(object):
         for i in range(start_x, end_x):
             for j in range(start_y, end_y):
                 curr = np.array([i, j])
-
                 if np.linalg.norm(start - curr) <= width:  # circle radius width
                     if img[i][j] == 100:
-                        # print("{}, {} near wall".format(i, j))
                         return True
 
         # print("not near wall")
@@ -245,7 +277,7 @@ class GlobalPlanner(object):
 
     def find_path(self, x_0, y_0, x_1, y_1):
         cost_map = self.cost_map
-        img = self.map_array
+        img = np.flipud(self.map_array.copy())
 
         # work backwards towards goal
         node = cost_map[x_1][y_1] #node = distance
@@ -254,8 +286,10 @@ class GlobalPlanner(object):
 
         path = [(c_x, c_y)]
         while node:
+            print("{}, {}".format(c_x, c_y), node)
             # get neighbors
             neighbors = self.get_neighbors(img, c_x, c_y)
+            print(neighbors)
 
             # find the neighbor with the lowest distance value
             # shortest_distance = np.inf
@@ -263,16 +297,15 @@ class GlobalPlanner(object):
                 n_x = neighbor[0]
                 n_y = neighbor[1]
 
-                if cost_map[n_x][n_y] < node and not (n_x, n_y) in path and not self.near_wall(img, n_x, n_y):
+                if cost_map[n_x][n_y] <= node and not (n_x, n_y) in path:
                     c_x = n_x
                     c_y = n_y
                     node = cost_map[n_x][n_y]
-                    print(node)
 
             path.append((c_x, c_y))
 
             if node == 0:
-                # print("we found the path")
+                print("we found the path")
                 path.append((x_0, y_0))
                 return path
 
@@ -320,9 +353,10 @@ class GlobalPlanner(object):
 
             # update the map object
             self.cost_map[cur_x][cur_y] = cur_p
+            
             # get neighbors
             neighbors = self.get_neighbors(map_img, cur_x, cur_y)
-
+            
             # already skipping occupied spaces
             for neighbor in neighbors:
                 n_x = neighbor[0]
@@ -336,6 +370,9 @@ class GlobalPlanner(object):
                     self.cost_map[n_x][n_y] = new_p
                     print("found the goal")
                     return True
+
+                # if self.near_wall(map_img, n_x, n_y):
+                #     new_p *= new_p  # square the distance to disuade path's near walls
 
                 # if the block is already seen, possibly update priority
                 if self.cost_map[n_x][n_y] != np.inf:
@@ -354,7 +391,7 @@ class GlobalPlanner(object):
                     heapq.heappush(nodes, (new_p, (n_x, n_y)))
 
             gray_max = np.max(self.cost_map)
-            plt.imsave("flood.png", self.cost_map, cmap='gray', vmin=0, vmax=gray_max)
+            plt.imsave("flood.png", self.cost_map, cmap='gray', vmin=0, vmax=300)
             # plt.show()
         print("could not find goal")
         return False
@@ -405,7 +442,9 @@ if __name__ == "__main__":
 
     # Main Loop:
     # part 1 and 2 - chart a path and navigate towards the goal
+    
     while not rospy.is_shutdown():
         gp.mark_path_to_goal()
+
     # Turn control over to ROS
     rospy.spin()
