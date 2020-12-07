@@ -35,7 +35,7 @@ class GlobalPlanner(object):
         self.map_data = None
         self.cost_map = None
         self.odom_pos = None
-        self.goal_pos = (-6, -3)
+        self.goal_pos = (5, 1)
         self.start_pos = None
         self.sub_goal = None
 
@@ -79,6 +79,7 @@ class GlobalPlanner(object):
         maxScanLength = scan_msg.range_max
         distances = scan_msg.ranges
         numScans = len(distances)
+        percent_increment = angleIncrement / maxAngle
 
         goal = ()
         if self.sub_goal == None:
@@ -98,15 +99,13 @@ class GlobalPlanner(object):
             if abs(angle_to_goal - self.odom_pos[2]) > 0.1:
                 # print(angle_to_goal)
                 if np.sign(angle_to_goal - self.odom_pos[2]) == 1:
-                    # print("a")
-                    command.angular.z += 1.0
-                    command.linear.x = 0.0
+                    command.angular.z += -1 * angle_to_goal / 2
+                    command.linear.x = 0.1
                 elif np.sign(angle_to_goal - self.odom_pos[2]) == -1:
-                    # print("b")
-                    command.angular.z += -1.0
-                    command.linear.x = 0.0
+                    command.angular.z += angle_to_goal / 2
+                    command.linear.x = 0.1
             else: # if we are looking at the goal, begin moving
-                command.linear.x += 2.0
+                command.linear.x += 1.5
 
         currentLaserTheta = minAngle
         # for each laser scan
@@ -114,23 +113,26 @@ class GlobalPlanner(object):
             # for each laser scan, the angle is currentLaserTheta, the index is i, and the distance is scan
             # Problem 2: avoid obstacles based on laser scan readings
             # TODO YOUR CODE HERE
-            d = 0.05
-            # print(scan)
+            d = 0.075
             # print(d / scan)
-            object_in_front = currentLaserTheta >= (maxAngle - 9 * angleIncrement) and currentLaserTheta <= (minAngle + 9 * angleIncrement) and scan <= d
-            object_on_left = currentLaserTheta >= (maxAngle - 18 * angleIncrement) and scan <= d
-            object_on_right = currentLaserTheta <= (minAngle + 18 * angleIncrement) and scan <= d
+            object_in_front = currentLaserTheta >= (maxAngle - 45 * angleIncrement) and currentLaserTheta <= (minAngle + 45 * angleIncrement) and scan <= d
+            object_on_left = currentLaserTheta >= (maxAngle - 90 * angleIncrement) and scan <= d
+            object_on_right = currentLaserTheta <= (minAngle + 90 * angleIncrement) and scan <= d
             # Goal may be a wall or pillar, stop near it
             if object_in_front:
-                command.linear.x -= 1.0
+                print("in front")
+                command.linear.x -= 0.01
             if object_on_right:
                 # turn left, object to the right
-                command.linear.x -= 0.1
-                command.angular.z += -0.25
-            if object_on_left:
+                # command.linear.x -= 0.01 
+                print("on right")
+                command.angular.z += -0.5
+            elif object_on_left:
                 # turn right, object to the left
-                command.linear.x -= 0.1
-                command.angular.z += 0.25
+                # command.linear.x -= 0.01 
+                print("on left")
+                command.angular.z += 0.5
+
             if self.is_at_location(goal[0], goal[1]):
                 command.linear.x = 0.0
                 command.linear.y = 0.0
@@ -190,10 +192,10 @@ class GlobalPlanner(object):
 
     def is_at_location(self, goal_x, goal_y):
         # if we are not at the goal
-        if abs(goal_x - self.odom_pos[0]) <= 0.25 or abs(goal_y - self.odom_pos[1]) <= 0.25:
-            return True
-        else:
+        if abs(goal_x - self.odom_pos[0]) > 0.25 or abs(goal_y - self.odom_pos[1]) > 0.25:
             return False
+        else:
+            return True
 
     def mark_path_to_goal(self):
         if self.odom_pos == None or self.goal_pos == None or self.map_data == None:
@@ -204,35 +206,12 @@ class GlobalPlanner(object):
         points.reverse()
         
         # if the path is short enough
-        threshold = 25
+        threshold = 10
         approx_path_len = len(points)
         if approx_path_len >= threshold:
-            sub_goal = approx_path_len // 4
+            sub_goal = approx_path_len // 3
             self.sub_goal = points[sub_goal]
             print(self.sub_goal)
-
-        path_marker = Marker()
-        # Marker header specifies what (and when) it is drawn relative to
-        path_marker.header.frame_id = "map"
-        path_marker.header.stamp = rospy.Time.now()
-        # uint8 POINTS=8
-        path_marker.type = 8
-        # Disappear after 1sec. Comment this line out to make them persist indefinitely
-        # path_marker.lifetime = rospy.rostime.Duration(1, 0)
-        # Set marker visual properties
-        path_marker.color.b = 1.0
-        path_marker.color.a = 1.0
-        path_marker.scale.x = 0.1
-        path_marker.scale.y = 0.1
-        for x, y in points:
-            # set current point
-            p = Point()
-            p.x = x
-            p.y = y
-            p.z = 0.1
-            path_marker.points.append(p)
-        self.mark_pub.publish(path_marker)
-        self.move_block = False
 
         # path_marker = Marker()
         # # Marker header specifies what (and when) it is drawn relative to
@@ -243,11 +222,11 @@ class GlobalPlanner(object):
         # # Disappear after 1sec. Comment this line out to make them persist indefinitely
         # # path_marker.lifetime = rospy.rostime.Duration(1, 0)
         # # Set marker visual properties
-        # path_marker.color.r = 1.0
+        # path_marker.color.b = 1.0
         # path_marker.color.a = 1.0
         # path_marker.scale.x = 0.1
         # path_marker.scale.y = 0.1
-        # for idx, (x, y) in enumerate(self.sub_goals):
+        # for x, y in points:
         #     # set current point
         #     p = Point()
         #     p.x = x
@@ -255,6 +234,29 @@ class GlobalPlanner(object):
         #     p.z = 0.1
         #     path_marker.points.append(p)
         # self.mark_pub.publish(path_marker)
+
+        path_marker = Marker()
+        # Marker header specifies what (and when) it is drawn relative to
+        path_marker.header.frame_id = "map"
+        path_marker.header.stamp = rospy.Time.now()
+        # uint8 POINTS=8
+        path_marker.type = 8
+        # Disappear after 1sec. Comment this line out to make them persist indefinitely
+        # path_marker.lifetime = rospy.rostime.Duration(1, 0)
+        # Set marker visual properties
+        path_marker.color.r = 1.0
+        path_marker.color.a = 1.0
+        path_marker.scale.x = 0.1
+        path_marker.scale.y = 0.1
+        # set current point
+        p = Point()
+        p.x = self.sub_goal[0]
+        p.y = self.sub_goal[1]
+        p.z = 0.1
+        path_marker.points.append(p)
+        self.mark_pub.publish(path_marker)
+
+        self.move_block = False
 
     def get_path(self):
         print("in get_path")
@@ -283,8 +285,8 @@ class GlobalPlanner(object):
         else:
             return []
        
-    def near_wall(self, img, x, y):
-        width = 5
+    def near_wall(self, img, x, y, w):
+        width = w
 
         start = np.array([x, y])
         start_x = x - width
@@ -317,7 +319,7 @@ class GlobalPlanner(object):
         while node:
             # print("{}, {}".format(c_x, c_y), node)
             # get neighbors
-            neighbors = self.get_neighbors(img, c_x, c_y)
+            neighbors = self.get_neighbors(img, c_x, c_y, 7)
             # print(neighbors)
 
             # find the neighbor with the lowest distance value
@@ -384,7 +386,7 @@ class GlobalPlanner(object):
             self.cost_map[cur_x][cur_y] = cur_p
             
             # get neighbors
-            neighbors = self.get_neighbors(map_img, cur_x, cur_y)
+            neighbors = self.get_neighbors(map_img, cur_x, cur_y, 5)
             
             # already skipping occupied spaces
             for neighbor in neighbors:
@@ -430,32 +432,32 @@ class GlobalPlanner(object):
         else:
             return False
 
-    def get_neighbors(self, image, row, column):
+    def get_neighbors(self, image, row, column, w):
         ret_pixels = []
         #get all immediate neighbors not near a wall (include diagnols)
 
-        if not self.near_wall(image, row - 1, column):
+        if not self.near_wall(image, row - 1, column, w):
             ret_pixels.append((row - 1, column))
 
-        if not self.near_wall(image, row + 1, column):
+        if not self.near_wall(image, row + 1, column, w):
             ret_pixels.append((row + 1, column))
 
-        if not self.near_wall(image, row, column - 1):
+        if not self.near_wall(image, row, column - 1, w):
             ret_pixels.append((row, column - 1))
 
-        if not self.near_wall(image, row, column + 1):
+        if not self.near_wall(image, row, column + 1, w):
             ret_pixels.append((row, column + 1))
 
-        if not self.near_wall(image, row - 1, column - 1):
+        if not self.near_wall(image, row - 1, column - 1, w):
             ret_pixels.append((row - 1, column - 1))
 
-        if not self.near_wall(image, row - 1, column + 1):
+        if not self.near_wall(image, row - 1, column + 1, w):
             ret_pixels.append((row - 1, column + 1))
 
-        if not self.near_wall(image, row + 1, column - 1):
+        if not self.near_wall(image, row + 1, column - 1, w):
             ret_pixels.append((row + 1, column - 1))
 
-        if not self.near_wall(image, row + 1, column + 1):
+        if not self.near_wall(image, row + 1, column + 1, w):
             ret_pixels.append((row + 1, column + 1))
 
         return ret_pixels
