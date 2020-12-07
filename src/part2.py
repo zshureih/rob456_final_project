@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from operator import sub
 import rospy
 from visualization_msgs.msg import Marker
 from nav_msgs.msg import OccupancyGrid
@@ -26,7 +27,7 @@ from geometry_msgs.msg import Twist
 class GlobalPlanner(object):
     def __init__(self):
         # block movement
-        self.mov_block = False
+        self.move_block = True
         # block path planning
         self.path_block = False
 
@@ -35,7 +36,8 @@ class GlobalPlanner(object):
         self.cost_map = None
         self.odom_pos = None
         self.goal_pos = (-6, -3)
-        self.sub_goals = None
+        self.start_pos = None
+        self.sub_goal = None
 
         # subscribers
         self.lidar_sub = rospy.Subscriber(
@@ -62,8 +64,12 @@ class GlobalPlanner(object):
         command.angular.x = 0.0
         command.angular.y = 0.0
         command.angular.z = 0.0
-        self.cmd_pub.publish(command)
-        return
+
+        # if we are waiting for a path, we publish a hold still command
+        if self.move_block:
+            self.cmd_pub.publish(command)
+            return
+        
         # Lidar properties (unpacked for your ease of use)
         # find current laser angle, max scan length, distance array for all scans, and number of laser scans
         maxAngle = scan_msg.angle_max
@@ -74,68 +80,70 @@ class GlobalPlanner(object):
         distances = scan_msg.ranges
         numScans = len(distances)
 
-        # Problem 1: move the robot toward the goal
-        # YOUR CODE HERE
-
+        goal = ()
+        if self.sub_goal == None:
+            goal = self.goal_pos
+        else:
+            goal = self.sub_goal
+        # print("GOAL: {}".format(goal))
+        
         # we are not at the goal
-        if abs(self.goal_pos[0] - self.odom_posp[0] > 0.25) or abs(self.goal_pos[1] - self.odom_posp[1] > 0.25):
+        if not self.is_at_location(goal[0], goal[1]):
             #turn towards the goal
-            inc_x = self.goal_pos[0] - self.odom_posp[0]
-            inc_y = self.goal_pos[1] - self.odom_posp[1]
+            inc_x = goal[0] - self.odom_pos[0]
+            inc_y = goal[1] - self.odom_pos[1]
             angle_to_goal = np.arctan2(inc_y, inc_x)
-            # print(angle_to_goal)
-            if abs(angle_to_goal - self.odom_posp[2]) > 0.1:
+            
+            # if we are not looking at the goal, rotate towards it
+            if abs(angle_to_goal - self.odom_pos[2]) > 0.1:
                 # print(angle_to_goal)
-                if np.sign(angle_to_goal - self.odom_posp[2]) == 1:
+                if np.sign(angle_to_goal - self.odom_pos[2]) == 1:
                     # print("a")
-                    command.angular.z += angle_to_goal / 2
+                    command.angular.z += 1.0
                     command.linear.x = 0.0
-                elif np.sign(angle_to_goal - self.odom_posp[2]) == -1:
+                elif np.sign(angle_to_goal - self.odom_pos[2]) == -1:
                     # print("b")
-                    command.angular.z += -1 * angle_to_goal / 2
+                    command.angular.z += -1.0
                     command.linear.x = 0.0
-            else:
-                command.linear.x += 0.2
-        # End problem 1
+            else: # if we are looking at the goal, begin moving
+                command.linear.x += 2.0
 
-        # currentLaserTheta = minAngle
-        # # for each laser scan
-        # for i, scan in enumerate(distances):
-        #     # for each laser scan, the angle is currentLaserTheta, the index is i, and the distance is scan
-        #     # Problem 2: avoid obstacles based on laser scan readings
-        #     # TODO YOUR CODE HERE
-        #     d = 0.1
-        #     # print(d / scan)
-        #     object_in_front = currentLaserTheta >= (
-        #         maxAngle - 18 * angleIncrement) and currentLaserTheta <= (minAngle + 18 * angleIncrement) and scan <= d
-        #     object_on_left = currentLaserTheta >= (
-        #         maxAngle - 36 * angleIncrement) and scan <= d
-        #     object_on_right = currentLaserTheta <= (
-        #         minAngle + 36 * angleIncrement) and scan <= d
-        #     # Goal may be a wall or pillar, stop near it
-        #     if object_in_front:
-        #         command.linear.x -= 3.0 * (d / scan)
-        #     if object_on_right:
-        #         # turn left, object to the right
-        #         command.linear.x -= 0.1 * (d / scan)
-        #         command.angular.z += -0.75 * (d / scan)
-        #     elif object_on_left:
-        #         # turn right, object to the left
-        #         command.linear.x -= 0.1 * (d / scan)
-        #         command.angular.z += 0.75 * (d / scan)
-        #     if abs(self.goal_pos[0] - ODOM[0] <= 0.25) and abs(self.goal_pos[1] - ODOM[1] <= 0.25):
-        #         command.linear.x = 0.0
-        #         command.linear.y = 0.0
-        #         command.linear.z = 0.0
-        #         command.angular.x = 0.0
-        #         command.angular.y = 0.0
-        #         command.angular.z = 0.0
-        #     # End problem 2
+        currentLaserTheta = minAngle
+        # for each laser scan
+        for i, scan in enumerate(distances):
+            # for each laser scan, the angle is currentLaserTheta, the index is i, and the distance is scan
+            # Problem 2: avoid obstacles based on laser scan readings
+            # TODO YOUR CODE HERE
+            d = 0.05
+            # print(scan)
+            # print(d / scan)
+            object_in_front = currentLaserTheta >= (maxAngle - 9 * angleIncrement) and currentLaserTheta <= (minAngle + 9 * angleIncrement) and scan <= d
+            object_on_left = currentLaserTheta >= (maxAngle - 18 * angleIncrement) and scan <= d
+            object_on_right = currentLaserTheta <= (minAngle + 18 * angleIncrement) and scan <= d
+            # Goal may be a wall or pillar, stop near it
+            if object_in_front:
+                command.linear.x -= 1.0
+            if object_on_right:
+                # turn left, object to the right
+                command.linear.x -= 0.1
+                command.angular.z += -0.25
+            if object_on_left:
+                # turn right, object to the left
+                command.linear.x -= 0.1
+                command.angular.z += 0.25
+            if self.is_at_location(goal[0], goal[1]):
+                command.linear.x = 0.0
+                command.linear.y = 0.0
+                command.linear.z = 0.0
+                command.angular.x = 0.0
+                command.angular.y = 0.0
+                command.angular.z = 0.0
+            # End problem 2
 
-        #     # After this loop is done, we increment the currentLaserTheta
-        #     currentLaserTheta = currentLaserTheta + angleIncrement
-        # print(command)
-        pub.publish(command)
+            # After this loop is done, we increment the currentLaserTheta
+            currentLaserTheta = currentLaserTheta + angleIncrement
+
+        self.cmd_pub.publish(command)
 
     def odom_callback(self, msg):
         """
@@ -151,39 +159,27 @@ class GlobalPlanner(object):
         (r, p, yaw) = euler_from_quaternion([ori.x, ori.y, ori.z, ori.w])
         self.odom_pos = (position.x, position.y, yaw)
 
-        # # draw a marker on the goal
-        # new_marker = Marker()
-        # # Marker header specifies what (and when) it is drawn relative to
-        # new_marker.header.frame_id = "map"
-        # new_marker.header.stamp = rospy.Time.now()
-        # # uint8 POINTS=8
-        # new_marker.type = 8
-        # # Disappear after 1sec. Comment this line out to make them persist indefinitely
-        # # new_marker.lifetime = rospy.rostime.Duration(1, 0)
-        # # Set marker visual properties
-        # new_marker.color.r = 1.0
-        # new_marker.color.a = 1.0
-        # new_marker.scale.x = 0.1
-        # new_marker.scale.y = 0.1
-        
-        # # set goal point
-        # p = Point()
-        # p.x = self.goal_pos[0]
-        # p.y = self.goal_pos[1]
-        # p.z = 0.1
-        # new_marker.points.append(p)
+        if self.start_pos == None:
+            self.start_pos = self.odom_pos[:2]
+            self.move_block = True
 
-        # # set current point
-        # p = Point()
-        # p.x = self.odom_pos[0]
-        # p.y = self.odom_pos[1]
-        # p.z = 0.1
-        # new_marker.points.append(p)
-
-        # self.mark_pub.publish(new_marker)
+        if self.sub_goal != None:
+            # check to see if we are at subgoal
+            if self.is_at_location(self.sub_goal[0], self.sub_goal[1]):
+                print("at sub_goal")
+                # rechart path to goal, find new subgoal
+                self.mark_path_to_goal()
+        else:
+            # check to see if we are at goal
+            if self.is_at_location(self.goal_pos[0], self.goal_pos[1]):
+                self.move_block = True # stop moving indefinitely
+                print("at goal")
+            elif self.is_at_location(self.start_pos[0], self.start_pos[1]):
+                print("at start")
+                # if we are at the start, chart a path to the goal
+                self.mark_path_to_goal()
 
     def map_callback(self, msg):
-        print("In Map Callback")
         self.map_data = msg
         shape = (self.map_data.info.width, self.map_data.info.height)
         self.map_array = np.reshape(
@@ -192,45 +188,76 @@ class GlobalPlanner(object):
         )
         self.map_pub.publish(True)
 
-    def is_at_goal(self):
+    def is_at_location(self, goal_x, goal_y):
         # if we are not at the goal
-        if abs(self.goal_pos[0] - self.odom_pos[0] > 0.25) or abs(self.goal_pos[1] - self.odom_pos[1] > 0.25):
-            return False
-        else:
+        if abs(goal_x - self.odom_pos[0]) <= 0.25 or abs(goal_y - self.odom_pos[1]) <= 0.25:
             return True
+        else:
+            return False
 
     def mark_path_to_goal(self):
         if self.odom_pos == None or self.goal_pos == None or self.map_data == None:
             return
 
         points = self.get_path()
-        # convert points back into rviz units
-        points = [(self.x_array_to_rviz(b), self.y_array_to_rviz(a))
-                  for a, b in points]
+        points = [(self.x_array_to_rviz(b), self.y_array_to_rviz(a)) for a, b in points]
+        points.reverse()
+        
+        # if the path is short enough
+        threshold = 25
+        approx_path_len = len(points)
+        if approx_path_len >= threshold:
+            sub_goal = approx_path_len // 4
+            self.sub_goal = points[sub_goal]
+            print(self.sub_goal)
 
-        new_marker = Marker()
+        path_marker = Marker()
         # Marker header specifies what (and when) it is drawn relative to
-        new_marker.header.frame_id = "map"
-        new_marker.header.stamp = rospy.Time.now()
+        path_marker.header.frame_id = "map"
+        path_marker.header.stamp = rospy.Time.now()
         # uint8 POINTS=8
-        new_marker.type = 8
+        path_marker.type = 8
         # Disappear after 1sec. Comment this line out to make them persist indefinitely
-        # new_marker.lifetime = rospy.rostime.Duration(1, 0)
+        # path_marker.lifetime = rospy.rostime.Duration(1, 0)
         # Set marker visual properties
-        new_marker.color.b = 1.0
-        new_marker.color.a = 1.0
-        new_marker.scale.x = 0.1
-        new_marker.scale.y = 0.1
-        for (x, y) in points:
+        path_marker.color.b = 1.0
+        path_marker.color.a = 1.0
+        path_marker.scale.x = 0.1
+        path_marker.scale.y = 0.1
+        for x, y in points:
             # set current point
             p = Point()
             p.x = x
             p.y = y
             p.z = 0.1
-            new_marker.points.append(p)
-        self.mark_pub.publish(new_marker)
+            path_marker.points.append(p)
+        self.mark_pub.publish(path_marker)
+        self.move_block = False
+
+        # path_marker = Marker()
+        # # Marker header specifies what (and when) it is drawn relative to
+        # path_marker.header.frame_id = "map"
+        # path_marker.header.stamp = rospy.Time.now()
+        # # uint8 POINTS=8
+        # path_marker.type = 8
+        # # Disappear after 1sec. Comment this line out to make them persist indefinitely
+        # # path_marker.lifetime = rospy.rostime.Duration(1, 0)
+        # # Set marker visual properties
+        # path_marker.color.r = 1.0
+        # path_marker.color.a = 1.0
+        # path_marker.scale.x = 0.1
+        # path_marker.scale.y = 0.1
+        # for idx, (x, y) in enumerate(self.sub_goals):
+        #     # set current point
+        #     p = Point()
+        #     p.x = x
+        #     p.y = y
+        #     p.z = 0.1
+        #     path_marker.points.append(p)
+        # self.mark_pub.publish(path_marker)
 
     def get_path(self):
+        print("in get_path")
         pos = self.odom_pos[:2]
         goal = self.goal_pos
         map_grid = self.map_data
@@ -251,7 +278,8 @@ class GlobalPlanner(object):
         self.cost_map = np.full(self.map_array.shape, fill_value=np.inf)
         if self.flood_fill(current_x, current_y, goal_x, goal_y):
             # get path
-            return self.find_path(current_x, current_y, goal_x, goal_y)
+            path = self.find_path(current_x, current_y, goal_x, goal_y)
+            return path
         else:
             return []
        
@@ -276,6 +304,7 @@ class GlobalPlanner(object):
         return False
 
     def find_path(self, x_0, y_0, x_1, y_1):
+        print("In find_path")
         cost_map = self.cost_map
         img = np.flipud(self.map_array.copy())
 
@@ -286,10 +315,10 @@ class GlobalPlanner(object):
 
         path = [(c_x, c_y)]
         while node:
-            print("{}, {}".format(c_x, c_y), node)
+            # print("{}, {}".format(c_x, c_y), node)
             # get neighbors
             neighbors = self.get_neighbors(img, c_x, c_y)
-            print(neighbors)
+            # print(neighbors)
 
             # find the neighbor with the lowest distance value
             # shortest_distance = np.inf
@@ -333,6 +362,7 @@ class GlobalPlanner(object):
         return y
 
     def flood_fill(self, x, y, final_x, final_y):
+        print("In Flood Fill")
         map_img = np.flipud(self.map_array.copy())
         unknown_spaces = np.where(map_img == -1)  # -1 means unknown
         map_img[unknown_spaces] = 100  # turn everything unknown into a wall
@@ -346,7 +376,6 @@ class GlobalPlanner(object):
         while nodes:
             # pop the node
             node = heapq.heappop(nodes)
-            print(node)
             # get its values
             cur_p = node[0]
             cur_x, cur_y = node[1]
@@ -390,8 +419,7 @@ class GlobalPlanner(object):
                     self.cost_map[n_x][n_y] = new_p
                     heapq.heappush(nodes, (new_p, (n_x, n_y)))
 
-            gray_max = np.max(self.cost_map)
-            plt.imsave("flood.png", self.cost_map, cmap='gray', vmin=0, vmax=300)
+            # plt.imsave("flood.png", self.cost_map, cmap='gray', vmin=0, vmax=300)
             # plt.show()
         print("could not find goal")
         return False
@@ -441,10 +469,6 @@ if __name__ == "__main__":
     gp = GlobalPlanner()
 
     # Main Loop:
-    # part 1 and 2 - chart a path and navigate towards the goal
     
-    while not rospy.is_shutdown():
-        gp.mark_path_to_goal()
-
     # Turn control over to ROS
     rospy.spin()
