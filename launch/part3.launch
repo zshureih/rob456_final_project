@@ -1,0 +1,13 @@
+<launch>
+    <param name="/use_sim_time" value="true"/>
+    <!-- <include file="$(find turtlebot3_gazebo)/launch/turtlebot3_house.launch"/> -->
+    <include file="$(find rob456_final_project)/launch/maze_closed.launch"/>
+	<include file="$(find turtlebot3_navigation)/launch/turtlebot3_navigation.launch"/>
+
+    <node pkg="tf" type="static_transform_publisher" name="base_scan_tf" args="0 0 0 0 0 0 base_footprint base_scan 100"/>
+    <node pkg="tf" type="static_transform_publisher" name="map_odom_tf" args="0 0 0 0 0 0 map odom 100"/>
+	
+    <!-- <node pkg="map_server" type="map_server" name="map_server" args="$(find rob456_final_project)/shureihz.yaml"/> -->
+    <node pkg="rob456_final_project" type="part3.py" name="part3" output="screen"/>
+    <node pkg="rviz" type="rviz" name="rviz"/>
+</launch>

@@ -35,8 +35,8 @@ class GlobalPlanner(object):
         self.map_data = None
         self.cost_map = None
         self.odom_pos = None
-        # self.goal_pos = (-7, 0)
-        self.goal_pos = (7, 1)
+        self.goal_pos = (-6, 0)
+        # self.goal_pos = (7, 1)
 
         self.start_pos = None
         self.sub_goal = None
@@ -98,13 +98,13 @@ class GlobalPlanner(object):
             angle_to_goal = np.arctan2(inc_y, inc_x)
             
             # if we are not looking at the goal, rotate towards it
-            if abs(angle_to_goal - self.odom_pos[2]) > 0.1:
+            if abs(angle_to_goal - self.odom_pos[2]) > 0.2:
                 # print(angle_to_goal)
                 if np.sign(angle_to_goal - self.odom_pos[2]) == 1:
-                    command.angular.z += angle_to_goal / 2
+                    command.angular.z += 1 * abs(angle_to_goal) / 2
                     command.linear.x = 0.1
                 elif np.sign(angle_to_goal - self.odom_pos[2]) == -1:
-                    command.angular.z += angle_to_goal / 2
+                    command.angular.z += -1 * abs(angle_to_goal) / 2
                     command.linear.x = 0.1
             else: # if we are looking at the goal, begin moving
                 command.linear.x += 0.5
@@ -125,12 +125,15 @@ class GlobalPlanner(object):
                 minAngle + 36 * angleIncrement) and scan <= d
             # Goal may be a wall or pillar, stop near it
             if object_in_front:
+                print("front")
                 command.linear.x -= 3.0 * (d / scan)
             if object_on_right:
                 # turn left, object to the right
+                print("right")
                 command.linear.x -= 0.1 * (d / scan)
                 command.angular.z += -0.5 * (d / scan)
-            elif object_on_left:
+            if object_on_left:
+                print("left")
                 # turn right, object to the left
                 command.linear.x -= 0.1 * (d / scan)
                 command.angular.z += 0.5 * (d / scan)
@@ -205,8 +208,9 @@ class GlobalPlanner(object):
         print("points in path:", len(points))
         approx_path_len = len(points)
         if approx_path_len >= threshold:
-            sub_goal = approx_path_len // 2
+            sub_goal = approx_path_len // 3 
             self.sub_goal = points[sub_goal]
+
             print(self.sub_goal)
         else: 
             self.sub_goal = None
@@ -321,7 +325,7 @@ class GlobalPlanner(object):
         while node:
             # print("{}, {}".format(c_x, c_y), node)
             # get neighbors
-            neighbors = self.get_neighbors(img, c_x, c_y, 5)
+            neighbors = self.get_neighbors(img, c_x, c_y, 8)
             # print(neighbors)
 
             # find the neighbor with the lowest distance value
