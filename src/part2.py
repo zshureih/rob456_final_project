@@ -35,11 +35,14 @@ class GlobalPlanner(object):
         self.map_data = None
         self.cost_map = None
         self.odom_pos = None
-        self.goal_pos = (-6, 0)
+        # self.goal_pos = (-2, 1)
+        # self.goal_pos = (-6, 3)
         # self.goal_pos = (7, 1)
+        self.goal_pos = (1, 3)
 
         self.start_pos = None
         self.sub_goal = None
+        self.sub_goals = []
 
         # subscribers
         self.lidar_sub = rospy.Subscriber(
@@ -98,16 +101,11 @@ class GlobalPlanner(object):
             angle_to_goal = np.arctan2(inc_y, inc_x)
             
             # if we are not looking at the goal, rotate towards it
-            if abs(angle_to_goal - self.odom_pos[2]) > 0.2:
-                # print(angle_to_goal)
-                if np.sign(angle_to_goal - self.odom_pos[2]) == 1:
-                    command.angular.z += 1 * abs(angle_to_goal) / 2
-                    command.linear.x = 0.1
-                elif np.sign(angle_to_goal - self.odom_pos[2]) == -1:
-                    command.angular.z += -1 * abs(angle_to_goal) / 2
-                    command.linear.x = 0.1
+            if abs(angle_to_goal - self.odom_pos[2]) > 0.1:
+                command.angular.z += 0.3 * (angle_to_goal - self.odom_pos[2])
+                command.linear.x = 0.0
             else: # if we are looking at the goal, begin moving
-                command.linear.x += 0.5
+                command.linear.x += 0.2
 
         currentLaserTheta = minAngle
         # for each laser scan
@@ -118,31 +116,27 @@ class GlobalPlanner(object):
             d = 0.3
             # print(d / scan)
             object_in_front = currentLaserTheta >= (
-                maxAngle - 18 * angleIncrement) and currentLaserTheta <= (minAngle + 18 * angleIncrement) and scan <= d
+                maxAngle - 9 * angleIncrement) and currentLaserTheta <= (minAngle + 9 * angleIncrement) and scan <= d
             object_on_left = currentLaserTheta >= (
-                maxAngle - 36 * angleIncrement) and scan <= d
+                maxAngle - 18 * angleIncrement) and scan <= d
             object_on_right = currentLaserTheta <= (
-                minAngle + 36 * angleIncrement) and scan <= d
+                minAngle + 18 * angleIncrement) and scan <= d
             # Goal may be a wall or pillar, stop near it
             if object_in_front:
-                print("front")
                 command.linear.x -= 3.0 * (d / scan)
-            if object_on_right:
+            elif object_on_right:
                 # turn left, object to the right
-                print("right")
-                command.linear.x -= 0.1 * (d / scan)
-                command.angular.z += -0.5 * (d / scan)
-            if object_on_left:
-                print("left")
+                # command.linear.x -= 0.1 * (d / scan)
+                command.angular.z += -0.05 * (d / scan)
+            elif object_on_left:
                 # turn right, object to the left
-                command.linear.x -= 0.1 * (d / scan)
-                command.angular.z += 0.5 * (d / scan)
+                # command.linear.x -= 0.1 * (d / scan)
+                command.angular.z += 0.05 * (d / scan)
             # End problem 2
 
             # After this loop is done, we increment the currentLaserTheta
             currentLaserTheta = currentLaserTheta + angleIncrement
 
-        # print(command)
         self.cmd_pub.publish(command)
 
     def odom_callback(self, msg):
@@ -162,22 +156,28 @@ class GlobalPlanner(object):
         if self.start_pos == None:
             self.start_pos = self.odom_pos[:2]
             self.move_block = True
+            self.mark_path_to_goal()
+            self.sub_goal = self.sub_goals.pop()
+            print(self.sub_goal)
+
 
         if self.sub_goal != None:
             # check to see if we are at subgoal
             if self.is_at_location(self.sub_goal[0], self.sub_goal[1]):
                 print("at sub_goal")
+                # set sub goal to next subgoal
+                if len(self.sub_goals) != 0:
+                    self.sub_goal = self.sub_goals.pop()
+                    print(self.sub_goal)
+                else:
+                    self.sub_goal = None
                 # rechart path to goal, find new subgoal
-                self.mark_path_to_goal()
+                # self.mark_path_to_goal()
         else:
             # check to see if we are at goal
             if self.is_at_location(self.goal_pos[0], self.goal_pos[1]):
                 self.move_block = True # stop moving indefinitely
                 print("at goal")
-            elif self.is_at_location(self.start_pos[0], self.start_pos[1]):
-                print("at start")
-                # if we are at the start, chart a path to the goal
-                self.mark_path_to_goal()
 
     def map_callback(self, msg):
         self.map_data = msg
@@ -203,17 +203,27 @@ class GlobalPlanner(object):
         points = [(self.x_array_to_rviz(b), self.y_array_to_rviz(a)) for a, b in points]
         points.reverse()
         
-        # if the path is short enough
-        threshold = 50
-        print("points in path:", len(points))
-        approx_path_len = len(points)
-        if approx_path_len >= threshold:
-            sub_goal = approx_path_len // 3 
-            self.sub_goal = points[sub_goal]
-
-            print(self.sub_goal)
-        else: 
-            self.sub_goal = None
+        path_marker = Marker()
+        # Marker header specifies what (and when) it is drawn relative to
+        path_marker.header.frame_id = "map"
+        path_marker.header.stamp = rospy.Time.now()
+        # uint8 POINTS=8
+        path_marker.type = 8
+        # Disappear after 1sec. Comment this line out to make them persist indefinitely
+        # path_marker.lifetime = rospy.rostime.Duration(1, 0)
+        # Set marker visual properties
+        path_marker.color.b = 1.0
+        path_marker.color.a = 1.0
+        path_marker.scale.x = 0.1
+        path_marker.scale.y = 0.1
+        for x, y in self.sub_goals:
+            # set current point
+            p = Point()
+            p.x = x
+            p.y = y
+            p.z = 0.1
+            path_marker.points.append(p)
+        self.mark_pub.publish(path_marker)
 
         # path_marker = Marker()
         # # Marker header specifies what (and when) it is drawn relative to
@@ -224,43 +234,21 @@ class GlobalPlanner(object):
         # # Disappear after 1sec. Comment this line out to make them persist indefinitely
         # # path_marker.lifetime = rospy.rostime.Duration(1, 0)
         # # Set marker visual properties
-        # path_marker.color.b = 1.0
+        # path_marker.color.r = 1.0
         # path_marker.color.a = 1.0
         # path_marker.scale.x = 0.1
         # path_marker.scale.y = 0.1
-        # for x, y in points:
-        #     # set current point
-        #     p = Point()
-        #     p.x = x
-        #     p.y = y
-        #     p.z = 0.1
-        #     path_marker.points.append(p)
+        # # set current point
+        # p = Point()
+        # if self.sub_goal:
+        #     p.x = self.sub_goal[0]
+        #     p.y = self.sub_goal[1]
+        # else:
+        #     p.x = self.goal_pos[0]
+        #     p.y = self.goal_pos[1]
+        # p.z = 0.1
+        # path_marker.points.append(p)
         # self.mark_pub.publish(path_marker)
-
-        path_marker = Marker()
-        # Marker header specifies what (and when) it is drawn relative to
-        path_marker.header.frame_id = "map"
-        path_marker.header.stamp = rospy.Time.now()
-        # uint8 POINTS=8
-        path_marker.type = 8
-        # Disappear after 1sec. Comment this line out to make them persist indefinitely
-        # path_marker.lifetime = rospy.rostime.Duration(1, 0)
-        # Set marker visual properties
-        path_marker.color.r = 1.0
-        path_marker.color.a = 1.0
-        path_marker.scale.x = 0.1
-        path_marker.scale.y = 0.1
-        # set current point
-        p = Point()
-        if self.sub_goal:
-            p.x = self.sub_goal[0]
-            p.y = self.sub_goal[1]
-        else:
-            p.x = self.goal_pos[0]
-            p.y = self.goal_pos[1]
-        p.z = 0.1
-        path_marker.points.append(p)
-        self.mark_pub.publish(path_marker)
 
         self.move_block = False
 
@@ -301,8 +289,8 @@ class GlobalPlanner(object):
         end_x = x + width
         end_y = y + width
 
-        for i in range(start_x, end_x):
-            for j in range(start_y, end_y):
+        for i in range(start_x, end_x + 1):
+            for j in range(start_y, end_y + 1):
                 curr = np.array([i, j])
                 if np.linalg.norm(start - curr) <= width:  # circle radius width
                     if img[i][j] == 100:
@@ -322,10 +310,12 @@ class GlobalPlanner(object):
         c_y = y_1
 
         path = [(c_x, c_y)]
+        corners = []
         while node:
             # print("{}, {}".format(c_x, c_y), node)
             # get neighbors
-            neighbors = self.get_neighbors(img, c_x, c_y, 8)
+            _open, walls = self.get_neighbors(img, c_x, c_y, 1)
+            neighbors = _open + walls
             # print(neighbors)
 
             # find the neighbor with the lowest distance value
@@ -339,10 +329,20 @@ class GlobalPlanner(object):
                     c_y = n_y
                     node = cost_map[n_x][n_y]
 
+            if len(path) > 3:
+                prev_point = path[-2]
+                if prev_point[0] != c_x and prev_point[1] != c_y:
+                    corners.append((c_x, c_y))
+
             path.append((c_x, c_y))
 
             if node == 0:
                 print("we found the path")
+
+                # corners.reverse()
+                self.sub_goals = [(self.x_array_to_rviz(
+                    b), self.y_array_to_rviz(a)) for a, b in corners]
+
                 path.append((x_0, y_0))
                 return path
 
@@ -384,6 +384,7 @@ class GlobalPlanner(object):
         while nodes:
             # pop the node
             node = heapq.heappop(nodes)
+            # print(node)
             # get its values
             cur_p = node[0]
             cur_x, cur_y = node[1]
@@ -392,8 +393,9 @@ class GlobalPlanner(object):
             self.cost_map[cur_x][cur_y] = cur_p
             
             # get neighbors
-            neighbors = self.get_neighbors(map_img, cur_x, cur_y, 5)
-            
+            open_pixels, near_walls = self.get_neighbors(map_img, cur_x, cur_y, 8)
+            neighbors = open_pixels + near_walls
+
             # already skipping occupied spaces
             for neighbor in neighbors:
                 n_x = neighbor[0]
@@ -402,6 +404,11 @@ class GlobalPlanner(object):
 
                 # make the path distance the priority
                 new_p = (cur_p + np.linalg.norm(np.array([cur_x, cur_y]) - n))
+
+                # print(idx)
+                idx = [(a, b) for a,b in near_walls if a == n_x and b == n_y]
+                if len(idx) > 0:
+                    new_p *= 100
 
                 if (n_x, n_y) == (final_x, final_y):
                     self.cost_map[n_x][n_y] = new_p
@@ -440,33 +447,57 @@ class GlobalPlanner(object):
 
     def get_neighbors(self, image, row, column, w):
         ret_pixels = []
+        walls = []
         #get all immediate neighbors not near a wall (include diagnols)
+        if not self.is_wall(image, row - 1, column):
+            if not self.near_wall(image, row - 1, column, w):
+                ret_pixels.append((row - 1, column))
+            else:
+                walls.append((row - 1, column))
 
-        if not self.near_wall(image, row - 1, column, w):
-            ret_pixels.append((row - 1, column))
+        if not self.is_wall(image, row + 1, column):
+            if not self.near_wall(image, row + 1, column, w):
+                ret_pixels.append((row + 1, column))
+            else:
+                walls.append((row + 1, column))
 
-        if not self.near_wall(image, row + 1, column, w):
-            ret_pixels.append((row + 1, column))
+        if not self.is_wall(image, row, column - 1):
+            if not self.near_wall(image, row, column - 1, w):
+                ret_pixels.append((row, column - 1))
+            else:
+                walls.append((row, column - 1))
 
-        if not self.near_wall(image, row, column - 1, w):
-            ret_pixels.append((row, column - 1))
+        if not self.is_wall(image, row, column + 1):
+            if not self.near_wall(image, row, column + 1, w):
+                ret_pixels.append((row, column + 1))
+            else:
+                walls.append((row, column + 1))
 
-        if not self.near_wall(image, row, column + 1, w):
-            ret_pixels.append((row, column + 1))
+        if not self.is_wall(image, row - 1, column - 1):
+            if not self.near_wall(image, row - 1, column - 1, w):
+                ret_pixels.append((row - 1, column - 1))
+            else:
+                walls.append((row - 1, column - 1))
 
-        if not self.near_wall(image, row - 1, column - 1, w):
-            ret_pixels.append((row - 1, column - 1))
+        if not self.is_wall(image, row - 1, column + 1):
+            if not self.near_wall(image, row - 1, column + 1, w):
+                ret_pixels.append((row - 1, column + 1))
+            else:
+                walls.append((row - 1, column + 1))
 
-        if not self.near_wall(image, row - 1, column + 1, w):
-            ret_pixels.append((row - 1, column + 1))
+        if not self.is_wall(image, row + 1, column - 1):
+            if not self.near_wall(image, row + 1, column - 1, w):
+                ret_pixels.append((row + 1, column - 1))
+            else:
+                walls.append((row + 1, column - 1))
 
-        if not self.near_wall(image, row + 1, column - 1, w):
-            ret_pixels.append((row + 1, column - 1))
+        if not self.is_wall(image, row + 1, column + 1):
+            if not self.near_wall(image, row + 1, column + 1, w):
+                ret_pixels.append((row + 1, column + 1))
+            else:
+                walls.append((row + 1, column + 1))
 
-        if not self.near_wall(image, row + 1, column + 1, w):
-            ret_pixels.append((row + 1, column + 1))
-
-        return ret_pixels
+        return ret_pixels, walls
 
 
 if __name__ == "__main__":
