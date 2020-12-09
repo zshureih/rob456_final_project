@@ -94,7 +94,7 @@ class GlobalPlanner(object):
         # print("GOAL: {}".format(goal))
 
         # we are not at the goal
-        if not self.is_at_location(goal[0], goal[1]):
+        if not self.is_mapped(goal[0], goal[1]) or not self.is_at_location(goal[0], goal[1]):
             #turn towards the goal
             inc_x = goal[0] - self.odom_pos[0]
             inc_y = goal[1] - self.odom_pos[1]
@@ -106,6 +106,7 @@ class GlobalPlanner(object):
                 command.linear.x = 0.0
             else:  # if we are looking at the goal, begin moving
                 command.linear.x += 0.2
+
 
         currentLaserTheta = minAngle
         # for each laser scan
@@ -126,12 +127,12 @@ class GlobalPlanner(object):
                 command.linear.x -= 3.0 * (d / scan)
             elif object_on_right:
                 # turn left, object to the right
-                # command.linear.x -= 0.1 * (d / scan)
-                command.angular.z += -0.05 * (d / scan)
+                # command.linear.x -= 0.2 * (d / scan)
+                command.angular.z += 0.01 * (d / scan)
             elif object_on_left:
                 # turn right, object to the left
-                # command.linear.x -= 0.1 * (d / scan)
-                command.angular.z += 0.05 * (d / scan)
+                # command.linear.x -= 0.2 * (d / scan)
+                command.angular.z += -0.01 * (d / scan)
             # End problem 2
 
             # After this loop is done, we increment the currentLaserTheta
@@ -148,17 +149,31 @@ class GlobalPlanner(object):
         :param: msg: Odometry message
         :returns: None
         """
+        if self.map_data == None:
+            return
+
         position = msg.pose.pose.position
         ori = msg.pose.pose.orientation
         (r, p, yaw) = euler_from_quaternion([ori.x, ori.y, ori.z, ori.w])
         self.odom_pos = (position.x, position.y, yaw)
 
+    def map_callback(self, msg):
+        self.map_data = msg
+        shape = (self.map_data.info.width, self.map_data.info.height)
+        self.map_array = np.reshape(
+            np.array(self.map_data.data),
+            shape
+        )
+        self.map_pub.publish(True)
+
         if self.start_pos == None:
             self.start_pos = self.odom_pos[:2]
             self.move_block = True
             self.mark_path_to_goal()
-            self.sub_goal = self.sub_goals.pop()
-            print(self.sub_goal)
+            if len(self.sub_goals) > 0:
+                self.sub_goal = self.sub_goals.pop()
+                self.sub_goal_timer = rospy.Time.now()
+
 
         if self.sub_goal != None:
             # check to see if we are at subgoal
@@ -170,26 +185,29 @@ class GlobalPlanner(object):
                     print(self.sub_goal)
                 else:
                     self.sub_goal = None
-                # rechart path to goal, find new subgoal
-                # self.mark_path_to_goal()
+            else:
+                current_time = rospy.Time.now()
+                if current_time.secs - self.sub_goal_timer.secs > 60:
+                    self.move_block = True
+                    self.mark_path_to_goal()
+                    if len(self.sub_goals) > 0:
+                        self.sub_goal = self.sub_goals.pop()
+                        self.sub_goal_timer = rospy.Time.now()
         else:
-            # check to see if we are at goal
-            if self.is_at_location(self.goal_pos[0], self.goal_pos[1]):
-                self.move_block = True  # stop moving indefinitely
-                print("at goal")
+            # check to see if we have mapped the goal
+            if self.is_mapped(self.goal_pos[0], self.goal_pos[1]) and self.is_at_location(self.goal_pos[0], self.goal_pos[1]):
+                self.move_block = True
+                print("mapped and navigated to goal, finding new goal")
+                self.mark_path_to_goal()
+                if len(self.sub_goals) > 0:
+                    self.sub_goal = self.sub_goals.pop()
+                    self.sub_goal_timer = rospy.Time.now()
+                    print(self.sub_goal)
 
-    def map_callback(self, msg):
-        self.map_data = msg
-        shape = (self.map_data.info.width, self.map_data.info.height)
-        self.map_array = np.reshape(
-            np.array(self.map_data.data),
-            shape
-        )
-        self.map_pub.publish(True)
 
     def is_at_location(self, goal_x, goal_y):
         # if we are not at the goal
-        if abs(goal_x - self.odom_pos[0]) > 0.25 or abs(goal_y - self.odom_pos[1]) > 0.25:
+        if abs(goal_x - self.odom_pos[0]) > 0.15 or abs(goal_y - self.odom_pos[1]) > 0.15:
             return False
         else:
             return True
@@ -216,7 +234,7 @@ class GlobalPlanner(object):
         path_marker.color.a = 1.0
         path_marker.scale.x = 0.1
         path_marker.scale.y = 0.1
-        for x, y in self.sub_goals:
+        for x, y in points:
             # set current point
             p = Point()
             p.x = x
@@ -251,6 +269,18 @@ class GlobalPlanner(object):
         # self.mark_pub.publish(path_marker)
 
         self.move_block = False
+
+    def is_mapped(self, x, y):
+        # takes x and y in terms of rviz and checks map to see if they are discovered
+        map_img = np.flipud(self.map_array.copy())
+        m_y = self.x_rviz_to_array(x)
+        m_x = self.y_rviz_to_array(y)
+
+        if map_img[m_x][m_y] == -1:
+            return False
+        else:
+            return True
+
 
     def get_path(self):
         print("in get_path")
@@ -347,6 +377,9 @@ class GlobalPlanner(object):
                     b), self.y_array_to_rviz(a)) for a, b in corners]
 
                 path.append((x_0, y_0))
+                # print(self.sub_goals)
+                # print(path)
+                # quit()
                 return path
 
         print("no path")
@@ -375,11 +408,6 @@ class GlobalPlanner(object):
     def flood_fill(self, x, y):
         print("In Flood Fill")
         map_img = np.flipud(self.map_array.copy())
-        # unknown_spaces = np.where(map_img == -1)  # -1 means unknown
-        # map_img[unknown_spaces] = 100  # turn everything unknown into a wall
-        # plt.imshow(map_img, cmap='gray', vmin=-1, vmax=100)
-        # plt.show(True)
-        # quit()
 
         nodes = [(0, (x, y))]
         heapify(nodes)
@@ -402,8 +430,7 @@ class GlobalPlanner(object):
                 return True
 
             # get neighbors
-            open_pixels, near_walls = self.get_neighbors(
-                map_img, cur_x, cur_y, 8)
+            open_pixels, near_walls = self.get_neighbors(map_img, cur_x, cur_y, 6)
             neighbors = open_pixels + near_walls
 
             # already skipping occupied spaces
@@ -419,11 +446,6 @@ class GlobalPlanner(object):
                 idx = [(a, b) for a, b in near_walls if a == n_x and b == n_y]
                 if len(idx) > 0:
                     new_p *= 100
-
-                # if (n_x, n_y) == (final_x, final_y):
-                #     self.cost_map[n_x][n_y] = new_p
-                #     print("found the goal")
-                #     return True
 
                 # if the block is already seen, possibly update priority
                 if self.cost_map[n_x][n_y] != np.inf:

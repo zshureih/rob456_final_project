@@ -157,7 +157,9 @@ class GlobalPlanner(object):
             self.start_pos = self.odom_pos[:2]
             self.move_block = True
             self.mark_path_to_goal()
-            self.sub_goal = self.sub_goals.pop()
+            if len(self.sub_goals) > 0:
+                self.sub_goal = self.sub_goals.pop()
+                self.sub_goal_timer = rospy.Time.now()
             print(self.sub_goal)
 
 
@@ -168,16 +170,34 @@ class GlobalPlanner(object):
                 # set sub goal to next subgoal
                 if len(self.sub_goals) != 0:
                     self.sub_goal = self.sub_goals.pop()
+                    self.sub_goal_timer = rospy.Time.now()
                     print(self.sub_goal)
                 else:
                     self.sub_goal = None
-                # rechart path to goal, find new subgoal
-                # self.mark_path_to_goal()
+                    self.sub_goal_timer = rospy.Time.now()
+            else:
+                # if we aren't at sub goal, and it has been more than 30 seconds
+                current_time = rospy.Time.now()
+                if current_time.secs - self.sub_goal_timer.secs > 60:
+                    self.move_block = True
+                    self.mark_path_to_goal()
+                    if len(self.sub_goals) > 0:
+                        self.sub_goal = self.sub_goals.pop()
+                        self.sub_goal_timer = rospy.Time.now()
         else:
             # check to see if we are at goal
             if self.is_at_location(self.goal_pos[0], self.goal_pos[1]):
                 self.move_block = True # stop moving indefinitely
                 print("at goal")
+            else:
+                current_time = rospy.Time.now()
+                if current_time.secs - self.sub_goal_timer.secs > 60:
+                    self.move_block = True
+                    self.mark_path_to_goal()
+                    if len(self.sub_goals) > 0:
+                        self.sub_goal = self.sub_goals.pop()
+                        self.sub_goal_timer = rospy.Time.now()
+            
 
     def map_callback(self, msg):
         self.map_data = msg
