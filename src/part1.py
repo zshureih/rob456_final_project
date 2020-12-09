@@ -395,9 +395,9 @@ class GlobalPlanner(object):
                     self.cost_map[n_x][n_y] = new_p
                     heapq.heappush(nodes, (new_p, (n_x, n_y)))
 
-            gray_max = np.max(self.cost_map)
-            plt.imsave("flood.png", self.cost_map,
-                       cmap='gray', vmin=0, vmax=300)
+            # gray_max = np.max(self.cost_map)
+            # plt.imsave("flood.png", self.cost_map,
+            #            cmap='gray', vmin=0, vmax=300)
             # plt.show()
         print("could not find goal")
         return False
